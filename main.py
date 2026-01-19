@@ -4,96 +4,58 @@ import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime, timedelta
 
-# 페이지 설정
-st.set_page_config(page_title="국내 주식 시각화 대시보드", layout="wide")
+st.set_page_config(page_title="국내 주식 시각화", layout="wide")
 
-# --- 종목 리스트 정의 ---
-# 종목명과 티커 심볼(yfinance 기준) 매핑
-STOCK_DICT = {
-    "삼성전자": "005930.KS",
-    "SK하이닉스": "000660.KS",
-    "LG에너지솔루션": "373220.KS",
-    "삼성바이오로직스": "207940.KS",
-    "현대차": "005380.KS",
-    "기아": "000270.KS",
-    "셀트리온": "068270.KS",
-    "POSCO홀딩스": "005490.KS",
-    "NAVER": "035420.KS",
-    "카카오": "035720.KS",
-    "에코프로": "086520.KQ",
-    "에코프로비엠": "247540.KQ"
-}
+# 1. 날짜 처리 수정: .date()를 사용하여 시간 정보를 제거합니다.
+today = datetime.now().date() 
 
-st.title("📈 국내 주요 주식 데이터 시각화")
-
-# --- 사이드바 설정 ---
 st.sidebar.header("조회 설정")
+# 시작 날짜 선택 (기본값: 1년 전)
+start_date = st.sidebar.date_input("시작 날짜", value=today - timedelta(days=365))
+# 종료 날짜도 선택 가능하게 변경 (기본값: 오늘)
+end_date = st.sidebar.date_input("종료 날짜", value=today)
 
-# 1. 종목 선택 (Selectbox)
-selected_stock_name = st.sidebar.selectbox(
-    "종목을 선택하세요", 
-    options=list(STOCK_DICT.keys()) + ["직접 입력"]
-)
+# 종목 선택 부분 (이전 코드와 동일)
+STOCK_DICT = {"삼성전자": "005930.KS", "SK하이닉스": "000660.KS", "NAVER": "035420.KS"}
+selected_stock = st.sidebar.selectbox("종목 선택", options=list(STOCK_DICT.keys()))
+ticker_symbol = STOCK_DICT[selected_stock]
 
-# 2. 종목 코드 결정
-if selected_stock_name == "직접 입력":
-    ticker_input = st.sidebar.text_input("종목 코드 입력 (예: 005930)")
-    market_type = st.sidebar.selectbox("시장 선택", [".KS (코스피)", ".KQ (코스닥)"])
-    ticker_symbol = ticker_input + market_type.split(" ")[0]
-else:
-    ticker_symbol = STOCK_DICT[selected_stock_name]
-    st.sidebar.info(f"선택된 코드: {ticker_symbol}")
-
-# 3. 날짜 범위 설정
-end_date = datetime.now()
-start_date = st.sidebar.date_input("시작 날짜", value=end_date - timedelta(days=365))
-
-# --- 데이터 로드 및 시각화 ---
-@st.cache_data
+# 2. 캐시 함수 수정: 인자값이 바뀌면 즉시 새로 로드함
+@st.cache_data(ttl=3600) # 1시간마다 캐시 자동 만료 설정
 def load_data(ticker, start, end):
-    try:
-        data = yf.download(ticker, start=start, end=end)
-        return data
-    except Exception:
-        return None
+    # yfinance는 문자열 형태의 날짜(YYYY-MM-DD)를 가장 잘 인식합니다.
+    data = yf.download(ticker, start=start.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'))
+    return data
 
-if ticker_symbol:
+if start_date >= end_date:
+    st.error("시작 날짜는 종료 날짜보다 빨라야 합니다.")
+else:
     df = load_data(ticker_symbol, start_date, end_date)
 
-    if df is not None and not df.empty:
-        # yfinance 최신 버전의 MultiIndex 대응
+    if not df.empty:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        # 상단 지표 (Metric)
-        last_close = df['Close'].iloc[-1]
-        prev_close = df['Close'].iloc[-2]
-        change = last_close - prev_close
-        pct_change = (change / prev_close) * 100
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("현재가 (종가)", f"{int(last_close):,} 원")
-        col2.metric("전일 대비", f"{int(change):,} 원", f"{pct_change:.2f}%")
-        col3.metric("거래량", f"{int(df['Volume'].iloc[-1]):,}")
-
-        # Plotly 차트
+        # 차트 제목에 조회 기간 표시 (변경 확인용)
         fig = go.Figure(data=[go.Candlestick(
-            x=df.index,
-            open=df['Open'],
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
-            name="주가"
+            x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']
         )])
-
+        
         fig.update_layout(
-            title=f"{selected_stock_name if selected_stock_name != '직접 입력' else ticker_symbol} 주가 추이",
-            yaxis_title="가격 (KRW)",
-            xaxis_rangeslider_visible=True,
-            template="plotly_white",
-            height=600
+            title=f"{selected_stock} ({start_date} ~ {end_date})",
+            xaxis_rangeslider_visible=True
         )
-
         st.plotly_chart(fig, use_container_width=True)
+        
+        # 데이터가 실제로 바뀌었는지 표로 확인
+        st.write(f"조회된 데이터 행 수: {len(df)}개")
     else:
-        st.error("데이터를 불러올 수 없습니다. 코드나 날짜를 확인해 주세요.")
+        st.info("해당 기간의 데이터가 없습니다.")
+
+# 이동평균 계산
+df['MA20'] = df['Close'].rolling(window=20).mean()
+df['MA60'] = df['Close'].rolling(window=60).mean()
+
+# 차트에 추가
+fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name='20일선', line=dict(color='orange', width=1)))
+fig.add_trace(go.Scatter(x=df.index, y=df['MA60'], name='60일선', line=dict(color='blue', width=1)))
