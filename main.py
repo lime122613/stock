@@ -1,43 +1,70 @@
 import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
+import pandas as pd
 from datetime import datetime, timedelta
 
 # 페이지 설정
 st.set_page_config(page_title="국내 주식 시각화 대시보드", layout="wide")
 
-st.title("📈 국내 주식 데이터 시각화")
-st.markdown(f"현재 날짜: {datetime.now().strftime('%Y-%m-%d')}")
+# --- 종목 리스트 정의 ---
+# 종목명과 티커 심볼(yfinance 기준) 매핑
+STOCK_DICT = {
+    "삼성전자": "005930.KS",
+    "SK하이닉스": "000660.KS",
+    "LG에너지솔루션": "373220.KS",
+    "삼성바이오로직스": "207940.KS",
+    "현대차": "005380.KS",
+    "기아": "000270.KS",
+    "셀트리온": "068270.KS",
+    "POSCO홀딩스": "005490.KS",
+    "NAVER": "035420.KS",
+    "카카오": "035720.KS",
+    "에코프로": "086520.KQ",
+    "에코프로비엠": "247540.KQ"
+}
 
-# 사이드바: 설정 및 입력
+st.title("📈 국내 주요 주식 데이터 시각화")
+
+# --- 사이드바 설정 ---
 st.sidebar.header("조회 설정")
-stock_code = st.sidebar.text_input("종목 코드 입력 (예: 005930)", value="005930")
-market_type = st.sidebar.selectbox("시장 선택", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
 
-# 티커 심볼 완성
-suffix = ".KS" if "KOSPI" in market_type else ".KQ"
-ticker_symbol = stock_code + suffix
+# 1. 종목 선택 (Selectbox)
+selected_stock_name = st.sidebar.selectbox(
+    "종목을 선택하세요", 
+    options=list(STOCK_DICT.keys()) + ["직접 입력"]
+)
 
-# 날짜 범위 설정
+# 2. 종목 코드 결정
+if selected_stock_name == "직접 입력":
+    ticker_input = st.sidebar.text_input("종목 코드 입력 (예: 005930)")
+    market_type = st.sidebar.selectbox("시장 선택", [".KS (코스피)", ".KQ (코스닥)"])
+    ticker_symbol = ticker_input + market_type.split(" ")[0]
+else:
+    ticker_symbol = STOCK_DICT[selected_stock_name]
+    st.sidebar.info(f"선택된 코드: {ticker_symbol}")
+
+# 3. 날짜 범위 설정
 end_date = datetime.now()
 start_date = st.sidebar.date_input("시작 날짜", value=end_date - timedelta(days=365))
 
-# 데이터 불러오기
+# --- 데이터 로드 및 시각화 ---
 @st.cache_data
 def load_data(ticker, start, end):
-    data = yf.download(ticker, start=start, end=end)
-    return data
+    try:
+        data = yf.download(ticker, start=start, end=end)
+        return data
+    except Exception:
+        return None
 
-try:
+if ticker_symbol:
     df = load_data(ticker_symbol, start_date, end_date)
 
-    if df.empty:
-        st.error("데이터를 불러오지 못했습니다. 종목 코드나 시장 선택을 확인해주세요.")
-    else:
-        # 데이터프레임의 인덱스가 MultiIndex인 경우 처리 (yfinance 최신 버전 대응)
+    if df is not None and not df.empty:
+        # yfinance 최신 버전의 MultiIndex 대응
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
-            
+
         # 상단 지표 (Metric)
         last_close = df['Close'].iloc[-1]
         prev_close = df['Close'].iloc[-2]
@@ -49,7 +76,7 @@ try:
         col2.metric("전일 대비", f"{int(change):,} 원", f"{pct_change:.2f}%")
         col3.metric("거래량", f"{int(df['Volume'].iloc[-1]):,}")
 
-        # Plotly 캔들스틱 차트
+        # Plotly 차트
         fig = go.Figure(data=[go.Candlestick(
             x=df.index,
             open=df['Open'],
@@ -60,18 +87,13 @@ try:
         )])
 
         fig.update_layout(
-            title=f"{ticker_symbol} 주가 추이",
+            title=f"{selected_stock_name if selected_stock_name != '직접 입력' else ticker_symbol} 주가 추이",
             yaxis_title="가격 (KRW)",
-            xaxis_rangeslider_visible=False,
-            template="plotly_dark",
+            xaxis_rangeslider_visible=True,
+            template="plotly_white",
             height=600
         )
 
         st.plotly_chart(fig, use_container_width=True)
-
-        # 데이터 표 표시
-        with st.expander("Raw 데이터 보기"):
-            st.dataframe(df.sort_index(ascending=False))
-
-except Exception as e:
-    st.warning(f"오류가 발생했습니다: {e}")
+    else:
+        st.error("데이터를 불러올 수 없습니다. 코드나 날짜를 확인해 주세요.")
